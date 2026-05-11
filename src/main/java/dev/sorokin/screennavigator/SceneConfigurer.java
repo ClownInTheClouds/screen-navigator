@@ -1,6 +1,6 @@
 package dev.sorokin.screennavigator;
 
-public interface Configuration {
+public interface SceneConfigurer {
 
     void configure(ScreenFactory screenFactory);
 }
