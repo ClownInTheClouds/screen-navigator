@@ -1,8 +1,11 @@
-package dev.sorokin.screennavigator;
+package dev.sorokin.screennavigator.pattern;
 
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
 
+/**
+ * MVVM: то, что раньше называлось {@code ViewModel} — переехало сюда без изменений по сути.
+ */
 public abstract class ViewModel {
 
     protected final PropertyChangeSupport listeners = new PropertyChangeSupport(this);

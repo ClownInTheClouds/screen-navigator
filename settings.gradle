@@ -1,3 +1,8 @@
 apply from: 'repositories.gradle'
 
 rootProject.name = 'screen-navigator'
+
+include 'screen-navigator-core'
+include 'screen-navigator-swing'
+include 'screen-navigator-servicelocator'
+// include 'screen-navigator-javafx'   // раскомментировать в фазе 6

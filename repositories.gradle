@@ -3,17 +3,17 @@ import org.gradle.api.initialization.resolve.RepositoriesMode
 gradle.settingsEvaluated { settings ->
     settings.pluginManagement {
         repositories {
-            mavenLocal()
             gradlePluginPortal()
             mavenCentral()
+            mavenLocal()
         }
     }
 
     settings.dependencyResolutionManagement {
         repositoriesMode.set(RepositoriesMode.PREFER_SETTINGS)
         repositories {
-            mavenLocal()
             mavenCentral()
+            mavenLocal()
         }
     }
 }

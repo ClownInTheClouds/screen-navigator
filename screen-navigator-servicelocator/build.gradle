@@ -1,0 +1,4 @@
+dependencies {
+    api project(':screen-navigator-core')
+    api 'dev.sorokin.servicelocator:service-locator-core:2.0.0'
+}

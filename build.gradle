@@ -1,10 +1,16 @@
 plugins {
-    id 'java'
-    id 'publish-plugin' version '2.0.0'
+    id 'publish-plugin' version '2.0.0' apply false
 }
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(25)
+subprojects {
+    apply plugin: 'java-library'
+    apply plugin: 'publish-plugin'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(25)
+        }
+        withSourcesJar()
+        withJavadocJar()
     }
 }
