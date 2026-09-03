@@ -5,4 +5,4 @@ rootProject.name = 'screen-navigator'
 include 'screen-navigator-core'
 include 'screen-navigator-swing'
 include 'screen-navigator-servicelocator'
-// include 'screen-navigator-javafx'   // раскомментировать в фазе 6
+include 'screen-navigator-javafx'

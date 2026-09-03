@@ -1,0 +1,14 @@
+plugins {
+    id 'java-library'
+    id 'org.openjfx.javafxplugin' version '0.1.0'
+}
+
+dependencies {
+    api project(':screen-navigator-core')
+}
+
+javafx {
+    version = '23.0.1'
+    modules = ['javafx.graphics', 'javafx.fxml']
+    configuration = 'api'
+}
