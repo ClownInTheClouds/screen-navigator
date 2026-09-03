@@ -1,22 +1,39 @@
+// screen-navigator-core/src/main/java/dev/sorokin/screennavigator/AbstractScreenNavigator.java
 package dev.sorokin.screennavigator;
 
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
+import java.util.function.Consumer;
 
 /**
- * Toolkit-agnostic часть навигации: реестр показанных экранов, back-стек, диспетчеризация
- * лайфцикл-колбэков. Конкретный тулкит реализует только {@link #attach} / {@link #display} —
- * то, что реально трогает UI-дерево конкретного фреймворка.
+ * Toolkit-agnostic часть навигации: реестр показанных экранов, back-стек, модальные окна,
+ * события навигации и диспетчеризация лайфцикл-колбэков. Конкретный тулкит реализует только то,
+ * что реально трогает UI-дерево фреймворка: {@link #attach}, {@link #display},
+ * {@link #createModal} и {@link #runOnUiThread}.
  *
- * @param <V> тип view конкретного тулкита ({@code JComponent}, {@code Node}, ...)
+ * @param <V> тип view конкретного тулкита ({@code JComponent}, {@code Parent}, ...)
  */
 public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
+    private final Class<V> viewType;
     private final Map<Class<? extends Screen<?, ?, ?>>, Screen<?, ?, ?>> attached = new HashMap<>();
     private final Deque<Class<? extends Screen<?, ?, ?>>> history = new ArrayDeque<>();
+    private final List<ScreenNavigatorListener> listeners = new CopyOnWriteArrayList<>();
     private final ScreenFactory screenFactory = new ScreenFactory();
 
     private Class<? extends Screen<?, ?, ?>> currentScreenType;
     private Screen<?, ?, ?> currentScreen;
+
+    /**
+     * @param viewType класс view конкретного тулкита, например {@code JComponent.class} у
+     *                 Swing-реализации или {@code Parent.class} у JavaFX-реализации. Используется
+     *                 только для {@link Class#cast(Object)} внутри {@link #viewOf}, чтобы не
+     *                 писать unchecked-приведение типа.
+     */
+    protected AbstractScreenNavigator(Class<V> viewType) {
+        this.viewType = viewType;
+    }
 
     @Override
     public void install(SceneConfigurer sceneConfigurer, SceneConfigurer... additional) {
@@ -29,14 +46,52 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     @Override
     public <T extends Screen<?, ?, ?>> void show(Class<T> screenType) {
-        show(screenType, true);
+        var screen = screenFactory.get(screenType);
+        present(screenType, screen, true);
+    }
+
+    @Override
+    public <SD, T extends Screen<?, ?, SD>> void show(Class<T> screenType, SD data) {
+        var screen = screenFactory.get(screenType);
+        screen.sceneData(data);
+        present(screenType, screen, true);
+    }
+
+    @Override
+    public <T extends Screen<?, ?, ?>> void showAsync(Class<T> screenType, Executor backgroundExecutor) {
+        backgroundExecutor.execute(() -> {
+            var screen = screenFactory.get(screenType); // тяжёлое создание — не на UI-потоке
+            runOnUiThread(() -> present(screenType, screen, true));
+        });
+    }
+
+    @Override
+    public <SD, T extends Screen<?, ?, SD>> void showAsync(Class<T> screenType, SD data, Executor backgroundExecutor) {
+        backgroundExecutor.execute(() -> {
+            var screen = screenFactory.get(screenType);
+            screen.sceneData(data);
+            runOnUiThread(() -> present(screenType, screen, true));
+        });
+    }
+
+    @Override
+    public <T extends Screen<?, ?, ?>> Runnable showModal(Class<T> screenType) {
+        var screen = screenFactory.get(screenType);
+        return presentModal(screenType, screen);
+    }
+
+    @Override
+    public <SD, T extends Screen<?, ?, SD>> Runnable showModal(Class<T> screenType, SD data) {
+        var screen = screenFactory.get(screenType);
+        screen.sceneData(data);
+        return presentModal(screenType, screen);
     }
 
     @Override
     public boolean back() {
         if (history.isEmpty()) return false;
         var previousType = history.pop();
-        show(previousType, false); // false — не пушим текущий экран обратно в историю
+        showByCapturedType(previousType, false);
         return true;
     }
 
@@ -45,27 +100,78 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         return currentScreen;
     }
 
-    private <T extends Screen<?, ?, ?>> void show(Class<T> screenType, boolean pushHistory) {
-        var next = screenFactory.get(screenType);
-        if (!attached.containsKey(screenType)) {
-            attached.put(screenType, next);
-            attach(screenType, viewOf(next));
+    @Override
+    public void evict(Class<? extends Screen<?, ?, ?>> screenType) {
+        attached.remove(screenType);
+        screenFactory.evict(screenType);
+        fire(l -> l.onScreenDestroyed(screenType));
+    }
+
+    @Override
+    public void addListener(ScreenNavigatorListener listener) {
+        listeners.add(listener);
+    }
+
+    @Override
+    public void removeListener(ScreenNavigatorListener listener) {
+        listeners.remove(listener);
+    }
+
+    /**
+     * Вспомогательный generic-метод, чтобы вызвать {@link #present} для типа, извлечённого из
+     * {@code history} (там он хранится как {@code Class<? extends Screen<?, ?, ?>>} —
+     * захваченный wildcard). Приведения типа не требуется: компилятор выполняет
+     * wildcard capture при вызове generic-метода с wildcard-аргументом.
+     */
+    private <T extends Screen<?, ?, ?>> void showByCapturedType(Class<T> screenType, boolean pushHistory) {
+        var screen = screenFactory.get(screenType);
+        present(screenType, screen, pushHistory);
+    }
+
+    private <T extends Screen<?, ?, ?>> void present(Class<T> screenType, T screen, boolean pushHistory) {
+        boolean firstShow = !attached.containsKey(screenType);
+        if (firstShow) {
+            attached.put(screenType, screen);
+            attach(screenType, viewOf(screen));
+            fire(l -> l.onScreenCreated(screenType));
         }
         if (currentScreen != null) {
             currentScreen.onHide();
+            fire(l -> l.onScreenHidden(currentScreenType));
             if (pushHistory) {
                 history.push(currentScreenType);
             }
         }
-        display(screenType, viewOf(next));
-        next.onShow();
-        currentScreen = next;
+        display(screenType, viewOf(screen));
+        screen.onShow();
+        fire(l -> l.onScreenShown(screenType));
+        currentScreen = screen;
         currentScreenType = screenType;
     }
 
-    @SuppressWarnings("unchecked")
+    private <T extends Screen<?, ?, ?>> Runnable presentModal(Class<T> screenType, T screen) {
+        var handle = createModal(screenType, viewOf(screen));
+        if (screen instanceof ModalScreen modalScreen) {
+            modalScreen.bindCloseAction(handle::close);
+        }
+        fire(l -> l.onModalOpened(screenType));
+        screen.onShow();
+        handle.show(); // для Swing/JavaFX-модалок блокирует вызывающий поток до close()
+        return () -> {
+            screen.onHide();
+            fire(l -> l.onModalClosed(screenType));
+            handle.close();
+        };
+    }
+
+    private void fire(Consumer<ScreenNavigatorListener> event) {
+        for (var listener : listeners) {
+            event.accept(listener);
+        }
+    }
+
     private V viewOf(Screen<?, ?, ?> screen) {
-        return (V) screen.getView();
+        return viewType.cast(screen.getView());
     }
 
     /** Первый показ экрана — добавить его view в UI-дерево. */
@@ -73,4 +179,10 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     /** Сделать {@code view} видимым (переключить экран). */
     protected abstract void display(Class<?> screenType, V view);
+
+    /** Создаёт (но не обязательно сразу показывает) модальное окно для {@code view}. */
+    protected abstract ModalHandle createModal(Class<?> screenType, V view);
+
+    /** Выполняет {@code action} на UI-потоке тулкита (EDT для Swing, FX Application Thread для JavaFX). */
+    protected abstract void runOnUiThread(Runnable action);
 }
