@@ -1,32 +1,48 @@
 package dev.sorokin.screennavigator.pattern;
 
-import java.beans.PropertyChangeListener;
-import java.beans.PropertyChangeSupport;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
-/**
- * MVVM: то, что раньше называлось {@code ViewModel} — переехало сюда без изменений по сути.
- */
 public abstract class ViewModel {
 
-    protected final PropertyChangeSupport listeners = new PropertyChangeSupport(this);
+    @FunctionalInterface
+    public interface ChangeListener {
+        void onChanged(String propertyName, Object oldValue, Object newValue);
+    }
+
+    private final List<ChangeListener> listeners = new CopyOnWriteArrayList<>();
+    private final Map<String, List<ChangeListener>> propertyListeners = new ConcurrentHashMap<>();
 
     protected void notifyListeners(String propertyName, Object oldValue, Object newValue) {
-        listeners.firePropertyChange(propertyName, oldValue, newValue);
+        for (var listener : listeners) {
+            listener.onChanged(propertyName, oldValue, newValue);
+        }
+        var specific = propertyListeners.get(propertyName);
+        if (specific != null) {
+            for (var listener : specific) {
+                listener.onChanged(propertyName, oldValue, newValue);
+            }
+        }
     }
 
-    public void addListener(PropertyChangeListener listener) {
-        listeners.addPropertyChangeListener(listener);
+    public void addListener(ChangeListener listener) {
+        listeners.add(listener);
     }
 
-    public void addListener(String propertyName, PropertyChangeListener listener) {
-        listeners.addPropertyChangeListener(propertyName, listener);
+    public void addListener(String propertyName, ChangeListener listener) {
+        propertyListeners.computeIfAbsent(propertyName, key -> new CopyOnWriteArrayList<>()).add(listener);
     }
 
-    public void removeListener(PropertyChangeListener listener) {
-        listeners.removePropertyChangeListener(listener);
+    public void removeListener(ChangeListener listener) {
+        listeners.remove(listener);
     }
 
-    public void removeListener(String propertyName, PropertyChangeListener listener) {
-        listeners.removePropertyChangeListener(propertyName, listener);
+    public void removeListener(String propertyName, ChangeListener listener) {
+        var specific = propertyListeners.get(propertyName);
+        if (specific != null) {
+            specific.remove(listener);
+        }
     }
 }

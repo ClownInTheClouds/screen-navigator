@@ -45,7 +45,6 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         return currentScreen;
     }
 
-    @SuppressWarnings("unchecked")
     private <T extends Screen<?, ?, ?>> void show(Class<T> screenType, boolean pushHistory) {
         var next = screenFactory.get(screenType);
         if (!attached.containsKey(screenType)) {
@@ -61,7 +60,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         display(screenType, viewOf(next));
         next.onShow();
         currentScreen = next;
-        currentScreenType = (Class<? extends Screen<?, ?, ?>>) screenType;
+        currentScreenType = screenType;
     }
 
     @SuppressWarnings("unchecked")
