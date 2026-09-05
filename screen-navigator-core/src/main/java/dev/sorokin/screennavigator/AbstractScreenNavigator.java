@@ -89,6 +89,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     @Override
     public boolean back() {
+        requireUiThread();
         if (history.isEmpty()) return false;
         var previousType = history.pop();
         showByCapturedType(previousType, false);
@@ -146,6 +147,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     }
 
     private <T extends Screen<?, ?, ?>> void present(Class<T> screenType, T screen, boolean pushHistory) {
+        requireUiThread();
         boolean firstShow = !attached.containsKey(screenType);
         if (firstShow) {
             attached.put(screenType, screen);
@@ -167,27 +169,23 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     }
 
     private <T extends Screen<?, ?, ?>> Runnable presentModal(Class<T> screenType, T screen) {
+        requireUiThread();
         var handle = createModal(screenType, viewOf(screen));
-
         var closed = new AtomicBoolean(false);
         Runnable closeAction = () -> {
             if (closed.compareAndSet(false, true)) {
                 handle.close();
             }
         };
-
         if (screen instanceof ModalScreen modalScreen) {
             modalScreen.bindCloseAction(closeAction);
         }
-
         fire(l -> l.onModalOpened(screenType));
         screen.onShow();
         handle.show();
-
         closeAction.run();
         screen.onHide();
         fire(l -> l.onModalClosed(screenType));
-
         return closeAction;
     }
 

@@ -1,4 +1,3 @@
-// screen-navigator-core/src/main/java/dev/sorokin/screennavigator/ScreenNavigator.java
 package dev.sorokin.screennavigator;
 
 import java.util.concurrent.Executor;
