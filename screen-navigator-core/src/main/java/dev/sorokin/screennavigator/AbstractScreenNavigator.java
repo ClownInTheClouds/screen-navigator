@@ -53,8 +53,8 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     @Override
     public <SD, T extends Screen<?, ?, SD>> void show(Class<T> screenType, SD data) {
         var screen = screenFactory.get(screenType);
-        screen.sceneData(data);
-        present(screenType, screen, true);
+        // data доставляется внутри presentWithData(), на UI-потоке, перед onShow() — см. п. 2.6.
+        presentWithData(screenType, screen, data, true);
     }
 
     @Override
@@ -68,9 +68,11 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     @Override
     public <SD, T extends Screen<?, ?, SD>> void showAsync(Class<T> screenType, SD data, Executor backgroundExecutor) {
         backgroundExecutor.execute(() -> {
-            var screen = screenFactory.get(screenType);
-            screen.sceneData(data);
-            runOnUiThread(() -> present(screenType, screen, true));
+            var screen = screenFactory.get(screenType); // тяжёлое создание — не на UI-потоке
+            // data не устанавливается здесь: захватывается лямбдой и доставляется внутри
+            // presentWithData() на UI-потоке — конкурентные showAsync для одного screenType
+            // больше не конкурируют за общее поле sceneData.
+            runOnUiThread(() -> presentWithData(screenType, screen, data, true));
         });
     }
 
@@ -83,8 +85,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     @Override
     public <SD, T extends Screen<?, ?, SD>> Runnable showModal(Class<T> screenType, SD data) {
         var screen = screenFactory.get(screenType);
-        screen.sceneData(data);
-        return presentModal(screenType, screen);
+        return presentModalWithData(screenType, screen, data);
     }
 
     @Override
@@ -146,7 +147,28 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         present(screenType, screen, pushHistory);
     }
 
+    /** Показ без scene-данных (обычный {@code show(Class)}/{@code back()}). */
     private <T extends Screen<?, ?, ?>> void present(Class<T> screenType, T screen, boolean pushHistory) {
+        presentInternal(screenType, screen, pushHistory, () -> { });
+    }
+
+    /**
+     * Показ со scene-данными. Отдельное (не перегруженное) имя — намеренно: перегрузка
+     * generic-метода, различающаяся типом параметра-небаундед generic ({@code SD}) против
+     * конкретного функционального интерфейса ({@code Runnable}) на той же позиции аргумента,
+     * приводит к ambiguous method call при передаче лямбды (см. историю фикса — компилятор не
+     * может однозначно разрешить вызов между двумя такими перегрузками). Разные имена методов
+     * убирают эту категорию ошибок полностью.
+     *
+     * <p>Доставка данных ({@link #deliverSceneData}) выполняется как часть общего конвейера показа
+     * — на UI-потоке, после {@link #display}, непосредственно перед {@link ScreenLifecycle#onShow()}.
+     */
+    private <SD, T extends Screen<?, ?, SD>> void presentWithData(Class<T> screenType, T screen, SD data, boolean pushHistory) {
+        presentInternal(screenType, screen, pushHistory, () -> deliverSceneData(screen, data));
+    }
+
+    /** Общий конвейер показа; {@code deliverSceneData} — no-op для варианта без данных. */
+    private <T extends Screen<?, ?, ?>> void presentInternal(Class<T> screenType, T screen, boolean pushHistory, Runnable deliverSceneData) {
         requireUiThread();
         boolean firstShow = !attached.containsKey(screenType);
         if (firstShow) {
@@ -162,6 +184,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
             }
         }
         display(screenType, viewOf(screen));
+        deliverSceneData.run();
         screen.onShow();
         fire(l -> l.onScreenShown(screenType));
         currentScreen = screen;
@@ -169,6 +192,15 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     }
 
     private <T extends Screen<?, ?, ?>> Runnable presentModal(Class<T> screenType, T screen) {
+        return presentModalInternal(screenType, screen, () -> { });
+    }
+
+    /** Причина отдельного имени (вместо перегрузки) — та же, что и у {@link #presentWithData}. */
+    private <SD, T extends Screen<?, ?, SD>> Runnable presentModalWithData(Class<T> screenType, T screen, SD data) {
+        return presentModalInternal(screenType, screen, () -> deliverSceneData(screen, data));
+    }
+
+    private <T extends Screen<?, ?, ?>> Runnable presentModalInternal(Class<T> screenType, T screen, Runnable deliverSceneData) {
         requireUiThread();
         var handle = createModal(screenType, viewOf(screen));
         var closed = new AtomicBoolean(false);
@@ -181,12 +213,29 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
             modalScreen.bindCloseAction(closeAction);
         }
         fire(l -> l.onModalOpened(screenType));
+        deliverSceneData.run();
         screen.onShow();
         handle.show();
         closeAction.run();
         screen.onHide();
         fire(l -> l.onModalClosed(screenType));
         return closeAction;
+    }
+
+    /**
+     * Доставляет scene-данные экрану. Если экран реализует {@link SceneDataAware}, данные приходят
+     * как параметр конкретного вызова показа ({@link SceneDataAware#onShow}). Иначе — fallback на
+     * старый механизм {@link Screen#sceneData(Object)} (общее мутируемое поле), для обратной
+     * совместимости с экранами, которые ещё не мигрировали на {@link SceneDataAware}.
+     */
+    private <SD> void deliverSceneData(Screen<?, ?, SD> screen, SD data) {
+        if (screen instanceof SceneDataAware<?> aware) {
+            @SuppressWarnings("unchecked")
+            var typed = (SceneDataAware<SD>) aware;
+            typed.onShow(data);
+        } else {
+            screen.sceneData(data);
+        }
     }
 
     private void fire(Consumer<ScreenNavigatorListener> event) {

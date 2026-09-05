@@ -43,8 +43,8 @@ public class ScreenFactory {
 
         try {
             var created = createInstance(screenType);
-            instances.put(screenType, created);
             created.onCreate();
+            instances.put(screenType, created);
             creatingFuture.complete(created);
             return screenType.cast(created);
         } catch (Throwable t) {

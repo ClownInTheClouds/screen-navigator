@@ -30,10 +30,20 @@ public abstract class Screen<V, L, SD> implements ScreenLifecycle {
         return logic;
     }
 
+    /**
+     * @return последние установленные scene-данные. При использовании {@link SceneDataAware}
+     *         это поле не обновляется — читайте данные из параметра {@link SceneDataAware#onShow}.
+     */
     public SD getSceneData() {
         return sceneData;
     }
 
+    /**
+     * Fallback-механизм передачи scene-данных: общее мутируемое поле экземпляра, кэшированного в
+     * {@code ScreenFactory}. Для экранов, участвующих в конкурентных сценариях показа
+     * ({@code showAsync}), предпочтительнее реализовать {@link SceneDataAware} — тогда данные
+     * приходят как параметр конкретного вызова показа, а не через это поле.
+     */
     public void sceneData(SD sceneData) {
         this.sceneData = sceneData;
     }

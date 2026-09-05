@@ -8,7 +8,12 @@ public interface ScreenNavigator {
 
     <T extends Screen<?, ?, ?>> void show(Class<T> screenType);
 
-    /** Показывает экран, предварительно передав ему {@code data} через {@link Screen#sceneData}. */
+    /**
+     * Показывает экран, передав ему {@code data}. Если {@code T} реализует {@link SceneDataAware},
+     * данные доставляются через {@link SceneDataAware#onShow(Object)} как параметр конкретного вызова
+     * показа (безопасно при конкурентных {@code show}/{@code showAsync} для одного {@code screenType}).
+     * Иначе — fallback на {@link Screen#sceneData(Object)}.
+     */
     <SD, T extends Screen<?, ?, SD>> void show(Class<T> screenType, SD data);
 
     /** Создаёт экран на {@code backgroundExecutor}, показывает на UI-потоке, когда готово. */
