@@ -102,9 +102,26 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     @Override
     public void evict(Class<? extends Screen<?, ?, ?>> screenType) {
-        attached.remove(screenType);
+        requireUiThread();
+        var screen = attached.remove(screenType);
+        if (screen != null) {
+            detach(screenType, viewOf(screen));
+        }
+        if (screenType.equals(currentScreenType)) {
+            currentScreen = null;
+            currentScreenType = null;
+        }
+        history.remove(screenType);
         screenFactory.evict(screenType);
         fire(l -> l.onScreenDestroyed(screenType));
+    }
+
+    private void requireUiThread() {
+        if (!isUiThread()) {
+            throw new IllegalStateException(
+                    "ScreenNavigator must be used from the UI thread; "
+                            + "wrap the call in the toolkit's UI dispatch mechanism (SwingUtilities.invokeLater / Platform.runLater)");
+        }
     }
 
     @Override
@@ -173,6 +190,22 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     private V viewOf(Screen<?, ?, ?> screen) {
         return viewType.cast(screen.getView());
     }
+
+    /**
+     * Лёгкая, неблокирующая проверка: выполняется ли текущий код на UI-потоке тулкита
+     * (EDT для Swing, FX Application Thread для JavaFX). В отличие от {@link #runOnUiThread},
+     * ничего не планирует и не ждёт — просто отвечает на вопрос "прямо сейчас мы на UI-потоке?".
+     * Используется в {@link #evict} для fail-fast до мутации состояния навигатора.
+     */
+    protected abstract boolean isUiThread();
+
+    /**
+     * Убирает {@code view} эвикнутого экрана из UI-дерева тулкита. Вызывается из {@link #evict}
+     * сразу после того, как экран убран из внутреннего реестра навигатора, но до того как
+     * {@link ScreenFactory#evict} вызовет {@link ScreenLifecycle#onDestroy()} — то есть view ещё
+     * гарантированно валиден (его логика/presenter ещё не уничтожены) в момент удаления из дерева.
+     */
+    protected abstract void detach(Class<?> screenType, V view);
 
     /** Первый показ экрана — добавить его view в UI-дерево. */
     protected abstract void attach(Class<?> screenType, V view);

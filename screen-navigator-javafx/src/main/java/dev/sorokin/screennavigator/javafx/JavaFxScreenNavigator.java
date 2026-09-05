@@ -62,12 +62,23 @@ public final class JavaFxScreenNavigator extends AbstractScreenNavigator<Parent>
         }
     }
 
+    @Override
+    protected void detach(Class<?> screenType, Parent view) {
+        checkFxThread();
+        rootContainer.getChildren().remove(view);
+    }
+
+    @Override
+    protected boolean isUiThread() {
+        return Platform.isFxApplicationThread();
+    }
+
     public StackPane getRootContainer() {
         return rootContainer;
     }
 
-    private static void checkFxThread() {
-        if (!Platform.isFxApplicationThread()) {
+    private void checkFxThread() { // <-- убрали static: теперь вызывает instance-метод isUiThread()
+        if (!isUiThread()) {
             throw new IllegalStateException(
                     "JavaFxScreenNavigator must be used from the FX Application Thread; "
                             + "wrap the call in Platform.runLater(...)");

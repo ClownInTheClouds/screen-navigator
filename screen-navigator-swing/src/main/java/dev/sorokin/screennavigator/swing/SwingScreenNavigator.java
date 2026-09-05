@@ -58,12 +58,25 @@ public final class SwingScreenNavigator extends AbstractScreenNavigator<JCompone
         }
     }
 
+    @Override
+    protected void detach(Class<?> screenType, JComponent view) {
+        checkEdt();
+        rootContainer.remove(view);
+        rootContainer.revalidate();
+        rootContainer.repaint();
+    }
+
+    @Override
+    protected boolean isUiThread() {
+        return SwingUtilities.isEventDispatchThread();
+    }
+
     public Container getRootContainer() {
         return rootContainer;
     }
 
     private void checkEdt() {
-        if (!SwingUtilities.isEventDispatchThread()) {
+        if (!isUiThread()) {
             throw new IllegalStateException(
                     "SwingScreenNavigator must be used from the EDT; "
                             + "wrap the call in SwingUtilities.invokeLater(...)");
