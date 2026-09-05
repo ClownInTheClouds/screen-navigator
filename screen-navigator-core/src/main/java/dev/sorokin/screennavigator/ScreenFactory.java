@@ -5,6 +5,14 @@ import java.util.Set;
 import java.util.concurrent.*;
 import java.util.function.Supplier;
 
+/**
+ * NOTE: логика конкурентного lazy-init с cycle detection (ScopedValue CREATING, pending-карта
+ * CompletableFuture, checkNotCircular, awaitCreation, createInstance) идентична
+ * {@code dev.sorokin.servicelocator.SimpleServiceLocator} — дублирование намеренное, ради
+ * требования "screen-navigator-core — zero dependencies" (см. аудит, п. 2.7). При любом изменении
+ * этой логики здесь (например, порядка onCreate()/instances.put(), см. п. 2.4) — синхронизируй
+ * вручную с SimpleServiceLocator, иначе поведение двух библиотек разойдётся.
+ */
 public class ScreenFactory {
 
     private static final long DEFAULT_WAIT_TIMEOUT_SECONDS = 10;
