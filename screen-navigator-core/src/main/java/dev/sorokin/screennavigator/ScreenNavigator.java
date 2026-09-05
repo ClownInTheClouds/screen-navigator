@@ -17,7 +17,14 @@ public interface ScreenNavigator {
 
     <SD, T extends Screen<?, ?, SD>> void showAsync(Class<T> screenType, SD data, Executor backgroundExecutor);
 
-    /** @return действие, закрывающее модальное окно программно ({@code closeAction.run()}) */
+    /**
+     * @return действие для принудительного закрытия модального окна извне текущего потока
+     *         (например, из таймаут-потока через {@code runOnUiThread(closeAction)}).
+     *         В штатном сценарии — когда пользователь закрывает диалог кнопкой или системным
+     *         крестиком — вызывать этот {@code Runnable} не требуется: {@code showModal} уже
+     *         вернёт управление только после того, как {@link ScreenLifecycle#onHide()} и
+     *         {@link ScreenNavigatorListener#onModalClosed} гарантированно отработали.
+     */
     <T extends Screen<?, ?, ?>> Runnable showModal(Class<T> screenType);
 
     <SD, T extends Screen<?, ?, SD>> Runnable showModal(Class<T> screenType, SD data);

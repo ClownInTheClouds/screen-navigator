@@ -1,9 +1,9 @@
-// screen-navigator-core/src/main/java/dev/sorokin/screennavigator/AbstractScreenNavigator.java
 package dev.sorokin.screennavigator;
 
 import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /**
@@ -168,17 +168,27 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     private <T extends Screen<?, ?, ?>> Runnable presentModal(Class<T> screenType, T screen) {
         var handle = createModal(screenType, viewOf(screen));
+
+        var closed = new AtomicBoolean(false);
+        Runnable closeAction = () -> {
+            if (closed.compareAndSet(false, true)) {
+                handle.close();
+            }
+        };
+
         if (screen instanceof ModalScreen modalScreen) {
-            modalScreen.bindCloseAction(handle::close);
+            modalScreen.bindCloseAction(closeAction);
         }
+
         fire(l -> l.onModalOpened(screenType));
         screen.onShow();
-        handle.show(); // для Swing/JavaFX-модалок блокирует вызывающий поток до close()
-        return () -> {
-            screen.onHide();
-            fire(l -> l.onModalClosed(screenType));
-            handle.close();
-        };
+        handle.show();
+
+        closeAction.run();
+        screen.onHide();
+        fire(l -> l.onModalClosed(screenType));
+
+        return closeAction;
     }
 
     private void fire(Consumer<ScreenNavigatorListener> event) {
