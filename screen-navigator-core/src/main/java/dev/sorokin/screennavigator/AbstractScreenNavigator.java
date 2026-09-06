@@ -18,24 +18,41 @@ import java.util.function.Consumer;
 public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     private final Class<V> viewType;
-    /** Типы экранов, которые уже показывались через {@link #showModal}; такие экраны запрещено показывать через {@link #show}. */
-    private final Set<Class<? extends Screen<?, ?, ?>>> modalOnly = ConcurrentHashMap.newKeySet();
     private final Map<Class<? extends Screen<?, ?, ?>>, Screen<?, ?, ?>> attached = new HashMap<>();
     private final Deque<Class<? extends Screen<?, ?, ?>>> history = new ArrayDeque<>();
     private final List<ScreenNavigatorListener> listeners = new CopyOnWriteArrayList<>();
-    private final ScreenFactory screenFactory = new ScreenFactory();
+    private final Set<Class<? extends Screen<?, ?, ?>>> modalOnly = ConcurrentHashMap.newKeySet(); // из 4.4
+    private final ScreenFactory screenFactory;
 
     private Class<? extends Screen<?, ?, ?>> currentScreenType;
     private Screen<?, ?, ?> currentScreen;
 
     /**
-     * @param viewType класс view конкретного тулкита, например {@code JComponent.class} у
-     *                 Swing-реализации или {@code Parent.class} у JavaFX-реализации. Используется
-     *                 только для {@link Class#cast(Object)} внутри {@link #viewOf}, чтобы не
-     *                 писать unchecked-приведение типа.
+     * Создаёт навигатор с новым {@link ScreenFactory} по умолчанию (с таймаутом
+     * ожидания {@code 10} секунд — см. {@link ScreenFactory#ScreenFactory()}).
+     *
+     * @param viewType класс toolkit-специфичного view (например, {@code JComponent.class}
+     *                 или {@code Parent.class}), используется для безопасного каста
+     *                 в {@link #viewOf(Screen)}
      */
     protected AbstractScreenNavigator(Class<V> viewType) {
+        this(viewType, new ScreenFactory());
+    }
+
+    /**
+     * Создаёт навигатор с явно переданным {@link ScreenFactory}.
+     * <p>
+     * Основное назначение — тестируемость: тестовый двойник {@code ScreenFactory}
+     * (или экземпляр с нестандартным {@code waitTimeoutSeconds}) можно подставить
+     * без прохождения полного цикла {@link #install}. Приложениям, использующим
+     * навигатор напрямую, обычно достаточно однопараметрического конструктора.
+     *
+     * @param viewType      класс toolkit-специфичного view
+     * @param screenFactory фабрика экранов, используемая этим навигатором
+     */
+    protected AbstractScreenNavigator(Class<V> viewType, ScreenFactory screenFactory) {
         this.viewType = viewType;
+        this.screenFactory = screenFactory;
     }
 
     @Override
