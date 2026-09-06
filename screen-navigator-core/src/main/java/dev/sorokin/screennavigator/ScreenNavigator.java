@@ -4,7 +4,16 @@ import java.util.concurrent.Executor;
 
 public interface ScreenNavigator {
 
-    void install(SceneConfigurer sceneConfigurer, SceneConfigurer... additional);
+    /**
+     * Регистрирует одну или несколько фабрик экранов через переданные
+     * {@link SceneConfigurer}. Порядок вызова {@code configure(...)} соответствует
+     * порядку аргументов.
+     *
+     * @param configurers конфигураторы сцены; пустой массив — легитимный no-op
+     *                     (например, если приложение динамически решает,
+     *                     что регистрировать нечего)
+     */
+    void install(SceneConfigurer... configurers);
 
     <T extends Screen<?, ?, ?>> void show(Class<T> screenType);
 

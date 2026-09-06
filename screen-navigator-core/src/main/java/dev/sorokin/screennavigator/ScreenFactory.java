@@ -63,11 +63,37 @@ public class ScreenFactory {
         }
     }
 
-    /** Убирает экран из кэша и вызывает {@link ScreenLifecycle#onDestroy()}. Решает проблему #9. */
+    /**
+     * Убирает экран из кэша и вызывает {@link ScreenLifecycle#onDestroy()}. Решает проблему #9.
+     */
     public void evict(Class<? extends Screen<?, ?, ?>> screenType) {
         var removed = instances.remove(screenType);
         if (removed != null) {
             removed.onDestroy();
+        }
+    }
+
+    /**
+     * Проверяет, зарегистрирована ли фабрика для указанного типа экрана
+     * через {@link #register(Class, Supplier)} — без попытки создать экземпляр.
+     * Полезно для динамического построения меню/навигации по зарегистрированным экранам.
+     */
+    public boolean isRegistered(Class<? extends Screen<?, ?, ?>> screenType) {
+        return factories.containsKey(screenType);
+    }
+
+    /**
+     * Эвиктит (вызывает {@link ScreenLifecycle#onDestroy()} и удаляет из кэша)
+     * все закэшированные экземпляры экранов разом. Регистрация фабрик через
+     * {@link #register} не затрагивается — экраны будут пересозданы при
+     * следующем {@link #get(Class)}.
+     * <p>
+     * Основной сценарий — logout/сброс состояния приложения без ручного
+     * перебора всех зарегистрированных {@code Class}.
+     */
+    public void clear() {
+        for (var screenType : Set.copyOf(instances.keySet())) {
+            evict(screenType);
         }
     }
 

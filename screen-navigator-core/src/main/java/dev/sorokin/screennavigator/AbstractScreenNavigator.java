@@ -17,15 +17,27 @@ import java.util.function.Consumer;
  */
 public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
+    private static final int UNLIMITED_HISTORY = Integer.MAX_VALUE;
+
     private final Class<V> viewType;
     private final Map<Class<? extends Screen<?, ?, ?>>, Screen<?, ?, ?>> attached = new HashMap<>();
     private final Deque<Class<? extends Screen<?, ?, ?>>> history = new ArrayDeque<>();
     private final List<ScreenNavigatorListener> listeners = new CopyOnWriteArrayList<>();
-    private final Set<Class<? extends Screen<?, ?, ?>>> modalOnly = ConcurrentHashMap.newKeySet(); // из 4.4
+    private final Set<Class<? extends Screen<?, ?, ?>>> modalOnly = ConcurrentHashMap.newKeySet();
     private final ScreenFactory screenFactory;
+    private final int maxHistoryDepth;
 
     private Class<? extends Screen<?, ?, ?>> currentScreenType;
     private Screen<?, ?, ?> currentScreen;
+
+    protected AbstractScreenNavigator(Class<V> viewType, ScreenFactory screenFactory, int maxHistoryDepth) {
+        if (maxHistoryDepth <= 0) {
+            throw new IllegalArgumentException("maxHistoryDepth must be positive, got: " + maxHistoryDepth);
+        }
+        this.viewType = viewType;
+        this.screenFactory = screenFactory;
+        this.maxHistoryDepth = maxHistoryDepth;
+    }
 
     /**
      * Создаёт навигатор с новым {@link ScreenFactory} по умолчанию (с таймаутом
@@ -36,7 +48,18 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
      *                 в {@link #viewOf(Screen)}
      */
     protected AbstractScreenNavigator(Class<V> viewType) {
-        this(viewType, new ScreenFactory());
+        this(viewType, new ScreenFactory(), UNLIMITED_HISTORY);
+    }
+
+    /**
+     * @param maxHistoryDepth максимальное число экранов, хранимых в истории
+     *                         {@link #back()}; при превышении самые старые
+     *                         записи вытесняются. Подстраховка от неограниченного
+     *                         роста истории в приложениях с очень длинной
+     *                         навигацией без вызовов {@code back()}.
+     */
+    protected AbstractScreenNavigator(Class<V> viewType, int maxHistoryDepth) {
+        this(viewType, new ScreenFactory(), maxHistoryDepth);
     }
 
     /**
@@ -51,17 +74,13 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
      * @param screenFactory фабрика экранов, используемая этим навигатором
      */
     protected AbstractScreenNavigator(Class<V> viewType, ScreenFactory screenFactory) {
-        this.viewType = viewType;
-        this.screenFactory = screenFactory;
+        this(viewType, screenFactory, UNLIMITED_HISTORY);
     }
 
     @Override
-    public void install(SceneConfigurer sceneConfigurer, SceneConfigurer... additional) {
-        sceneConfigurer.configure(screenFactory);
-        if (additional == null) return;
-        for (var config : additional) {
-            config.configure(screenFactory);
-        }
+    public void install(SceneConfigurer... configurers) {
+        if (configurers == null) return;
+        for (var config : configurers) config.configure(screenFactory);
     }
 
     @Override
@@ -73,7 +92,6 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     @Override
     public <SD, T extends Screen<?, ?, SD>> void show(Class<T> screenType, SD data) {
         var screen = screenFactory.get(screenType);
-        // data доставляется внутри presentWithData(), на UI-потоке, перед onShow() — см. п. 2.6.
         presentWithData(screenType, screen, data, true);
     }
 
@@ -88,10 +106,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     @Override
     public <SD, T extends Screen<?, ?, SD>> void showAsync(Class<T> screenType, SD data, Executor backgroundExecutor) {
         backgroundExecutor.execute(() -> {
-            var screen = screenFactory.get(screenType); // тяжёлое создание — не на UI-потоке
-            // data не устанавливается здесь: захватывается лямбдой и доставляется внутри
-            // presentWithData() на UI-потоке — конкурентные showAsync для одного screenType
-            // больше не конкурируют за общее поле sceneData.
+            var screen = screenFactory.get(screenType);
             runOnUiThread(() -> presentWithData(screenType, screen, data, true));
         });
     }
@@ -236,6 +251,9 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         currentScreenType = screenType;
         if (pushHistory && previousScreen != null) {
             history.push(previousScreenType);
+            while (history.size() > maxHistoryDepth) {
+                history.removeLast();
+            }
         }
 
         if (previousScreen != null) {
@@ -332,6 +350,26 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         if (firstFailure != null) {
             handleListenerError(firstFailure);
         }
+    }
+
+    /**
+     * Проверяет, есть ли в истории навигации экран, к которому можно вернуться
+     * вызовом {@link #back()}, без выполнения самого перехода.
+     */
+    public boolean canGoBack() {
+        requireUiThread();
+        return !history.isEmpty();
+    }
+
+    /**
+     * Проверяет, является ли экран указанного типа текущим показанным
+     * (эквивалент {@code screenType.equals(currentScreenType)}, но без
+     * необходимости обращаться к {@link #getCurrentScreen()} и делать
+     * {@code instanceof}/{@code getClass().equals(...)} в коде приложения).
+     */
+    public boolean isShowing(Class<?> screenType) {
+        requireUiThread();
+        return currentScreenType != null && currentScreenType.equals(screenType);
     }
 
     /**
