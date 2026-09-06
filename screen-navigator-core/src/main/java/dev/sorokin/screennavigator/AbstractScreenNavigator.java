@@ -1,6 +1,7 @@
 package dev.sorokin.screennavigator;
 
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -17,6 +18,8 @@ import java.util.function.Consumer;
 public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     private final Class<V> viewType;
+    /** Типы экранов, которые уже показывались через {@link #showModal}; такие экраны запрещено показывать через {@link #show}. */
+    private final Set<Class<? extends Screen<?, ?, ?>>> modalOnly = ConcurrentHashMap.newKeySet();
     private final Map<Class<? extends Screen<?, ?, ?>>, Screen<?, ?, ?>> attached = new HashMap<>();
     private final Deque<Class<? extends Screen<?, ?, ?>>> history = new ArrayDeque<>();
     private final List<ScreenNavigatorListener> listeners = new CopyOnWriteArrayList<>();
@@ -131,6 +134,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
             currentScreenType = null;
         }
         history.remove(screenType);
+        modalOnly.remove(screenType);
         screenFactory.evict(screenType);
         fire(listener -> listener.onScreenDestroyed(screenType));
     }
@@ -190,8 +194,15 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     /**
      * Общий конвейер показа; {@code deliverSceneData} — no-op для варианта без данных.
      */
+
     private <T extends Screen<?, ?, ?>> void presentInternal(Class<T> screenType, T screen, boolean pushHistory, Runnable deliverSceneData) {
         requireUiThread();
+        if (modalOnly.contains(screenType)) {
+            throw new IllegalStateException(
+                    screenType.getName() + " is already used as a modal screen; "
+                            + "a Screen instance must not be shown via both show(...) and showModal(...)");
+        }
+
         boolean firstShow = !attached.containsKey(screenType);
         if (firstShow) {
             attached.put(screenType, screen);
@@ -233,6 +244,13 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     private <T extends Screen<?, ?, ?>> Runnable presentModalInternal(Class<T> screenType, T screen, Runnable deliverSceneData) {
         requireUiThread();
+        if (attached.containsKey(screenType)) {
+            throw new IllegalStateException(
+                    screenType.getName() + " is already attached via show(...); "
+                            + "a Screen instance must not be shown via both show(...) and showModal(...)");
+        }
+        modalOnly.add(screenType);
+
         var handle = createModal(screenType, viewOf(screen));
         var closed = new AtomicBoolean(false);
         Runnable closeAction = () -> {
