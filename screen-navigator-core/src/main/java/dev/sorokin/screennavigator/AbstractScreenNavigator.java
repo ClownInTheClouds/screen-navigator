@@ -102,6 +102,19 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         return currentScreen;
     }
 
+    /**
+     * Полностью удаляет экран: отсоединяет его view от контейнера тулкита, инвалидирует
+     * кэшированный экземпляр в {@link ScreenFactory} и вызывает {@link ScreenLifecycle#onDestroy()}.
+     * <p>
+     * Если удаляемый экран является текущим показанным ({@link #getCurrentScreen()}),
+     * перед уничтожением ему гарантированно доставляется {@link ScreenLifecycle#onHide()} —
+     * контракт лайфцикла {@code onCreate -> onShow -> onHide -> onDestroy} соблюдается
+     * даже при принудительном evict'е, а не только при обычной навигации через {@link #show}.
+     *
+     * @param screenType тип экрана; должен быть предварительно зарегистрирован через
+     *                   {@link SceneConfigurer#configure(ScreenFactory)}
+     * @throws IllegalStateException если вызвано не из UI-потока
+     */
     @Override
     public void evict(Class<? extends Screen<?, ?, ?>> screenType) {
         requireUiThread();
@@ -110,12 +123,16 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
             detach(screenType, viewOf(screen));
         }
         if (screenType.equals(currentScreenType)) {
+            if (currentScreen != null) {
+                currentScreen.onHide();
+                fire(listener -> listener.onScreenHidden(currentScreenType));
+            }
             currentScreen = null;
             currentScreenType = null;
         }
         history.remove(screenType);
         screenFactory.evict(screenType);
-        fire(l -> l.onScreenDestroyed(screenType));
+        fire(listener -> listener.onScreenDestroyed(screenType));
     }
 
     private void requireUiThread() {
@@ -147,9 +164,12 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         present(screenType, screen, pushHistory);
     }
 
-    /** Показ без scene-данных (обычный {@code show(Class)}/{@code back()}). */
+    /**
+     * Показ без scene-данных (обычный {@code show(Class)}/{@code back()}).
+     */
     private <T extends Screen<?, ?, ?>> void present(Class<T> screenType, T screen, boolean pushHistory) {
-        presentInternal(screenType, screen, pushHistory, () -> { });
+        presentInternal(screenType, screen, pushHistory, () -> {
+        });
     }
 
     /**
@@ -167,35 +187,46 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         presentInternal(screenType, screen, pushHistory, () -> deliverSceneData(screen, data));
     }
 
-    /** Общий конвейер показа; {@code deliverSceneData} — no-op для варианта без данных. */
+    /**
+     * Общий конвейер показа; {@code deliverSceneData} — no-op для варианта без данных.
+     */
     private <T extends Screen<?, ?, ?>> void presentInternal(Class<T> screenType, T screen, boolean pushHistory, Runnable deliverSceneData) {
         requireUiThread();
         boolean firstShow = !attached.containsKey(screenType);
         if (firstShow) {
             attached.put(screenType, screen);
             attach(screenType, viewOf(screen));
-            fire(l -> l.onScreenCreated(screenType));
+            fire(listener -> listener.onScreenCreated(screenType));
         }
-        if (currentScreen != null) {
-            currentScreen.onHide();
-            fire(l -> l.onScreenHidden(currentScreenType));
-            if (pushHistory) {
-                history.push(currentScreenType);
-            }
-        }
+
+        var previousScreen = currentScreen;
+        var previousScreenType = currentScreenType;
+
         display(screenType, viewOf(screen));
-        deliverSceneData.run();
-        screen.onShow();
-        fire(l -> l.onScreenShown(screenType));
+
         currentScreen = screen;
         currentScreenType = screenType;
+        if (pushHistory && previousScreen != null) {
+            history.push(previousScreenType);
+        }
+
+        if (previousScreen != null) {
+            previousScreen.onHide();
+            fire(listener -> listener.onScreenHidden(previousScreenType));
+        }
+        deliverSceneData.run();
+        screen.onShow();
+        fire(listener -> listener.onScreenShown(screenType));
     }
 
     private <T extends Screen<?, ?, ?>> Runnable presentModal(Class<T> screenType, T screen) {
-        return presentModalInternal(screenType, screen, () -> { });
+        return presentModalInternal(screenType, screen, () -> {
+        });
     }
 
-    /** Причина отдельного имени (вместо перегрузки) — та же, что и у {@link #presentWithData}. */
+    /**
+     * Причина отдельного имени (вместо перегрузки) — та же, что и у {@link #presentWithData}.
+     */
     private <SD, T extends Screen<?, ?, SD>> Runnable presentModalWithData(Class<T> screenType, T screen, SD data) {
         return presentModalInternal(screenType, screen, () -> deliverSceneData(screen, data));
     }
@@ -205,20 +236,23 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         var handle = createModal(screenType, viewOf(screen));
         var closed = new AtomicBoolean(false);
         Runnable closeAction = () -> {
-            if (closed.compareAndSet(false, true)) {
-                handle.close();
-            }
+            if (closed.compareAndSet(false, true)) handle.close();
         };
-        if (screen instanceof ModalScreen modalScreen) {
-            modalScreen.bindCloseAction(closeAction);
+        if (screen instanceof ModalScreen modalScreen) modalScreen.bindCloseAction(closeAction);
+        fire(listener -> listener.onModalOpened(screenType));
+
+        try {
+            deliverSceneData.run();
+            screen.onShow();
+        } catch (RuntimeException e) {
+            closeAction.run();
+            throw e;
         }
-        fire(l -> l.onModalOpened(screenType));
-        deliverSceneData.run();
-        screen.onShow();
+
         handle.show();
         closeAction.run();
         screen.onHide();
-        fire(l -> l.onModalClosed(screenType));
+        fire(listener -> listener.onModalClosed(screenType));
         return closeAction;
     }
 
@@ -238,10 +272,45 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         }
     }
 
+    /**
+     * Уведомляет всех зарегистрированных {@link ScreenNavigatorListener} о событии.
+     * <p>
+     * Исключение из одного listener'а не прерывает уведомление остальных — иначе
+     * порядок регистрации listener'ов начинает влиять на то, кто вообще получит
+     * событие, что делает поведение непредсказуемым. По умолчанию исключение
+     * пробрасывается дальше через {@link #handleListenerError} (fail-fast), но
+     * только после того, как остальные listener'ы уже уведомлены.
+     */
     private void fire(Consumer<ScreenNavigatorListener> event) {
+        RuntimeException firstFailure = null;
         for (var listener : listeners) {
-            event.accept(listener);
+            try {
+                event.accept(listener);
+            } catch (RuntimeException e) {
+                if (firstFailure == null) {
+                    firstFailure = e;
+                } else {
+                    firstFailure.addSuppressed(e);
+                }
+            }
         }
+        if (firstFailure != null) {
+            handleListenerError(firstFailure);
+        }
+    }
+
+    /**
+     * Точка расширения: вызывается после того, как все listener'ы уведомлены,
+     * если хотя бы один из них бросил исключение. Поведение по умолчанию —
+     * fail-fast (пробросить исключение дальше). Приложение может переопределить
+     * этот метод в своей реализации {@link AbstractScreenNavigator}, чтобы вместо
+     * падения залогировать ошибку.
+     *
+     * @param e первое пойманное исключение; последующие исключения от других
+     *          listener'ов присоединены как {@link Throwable#getSuppressed()}
+     */
+    protected void handleListenerError(RuntimeException e) {
+        throw e;
     }
 
     private V viewOf(Screen<?, ?, ?> screen) {
@@ -264,15 +333,23 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
      */
     protected abstract void detach(Class<?> screenType, V view);
 
-    /** Первый показ экрана — добавить его view в UI-дерево. */
+    /**
+     * Первый показ экрана — добавить его view в UI-дерево.
+     */
     protected abstract void attach(Class<?> screenType, V view);
 
-    /** Сделать {@code view} видимым (переключить экран). */
+    /**
+     * Сделать {@code view} видимым (переключить экран).
+     */
     protected abstract void display(Class<?> screenType, V view);
 
-    /** Создаёт (но не обязательно сразу показывает) модальное окно для {@code view}. */
+    /**
+     * Создаёт (но не обязательно сразу показывает) модальное окно для {@code view}.
+     */
     protected abstract ModalHandle createModal(Class<?> screenType, V view);
 
-    /** Выполняет {@code action} на UI-потоке тулкита (EDT для Swing, FX Application Thread для JavaFX). */
+    /**
+     * Выполняет {@code action} на UI-потоке тулкита (EDT для Swing, FX Application Thread для JavaFX).
+     */
     protected abstract void runOnUiThread(Runnable action);
 }
