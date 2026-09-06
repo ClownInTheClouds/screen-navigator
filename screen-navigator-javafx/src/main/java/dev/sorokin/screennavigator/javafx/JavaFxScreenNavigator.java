@@ -18,18 +18,35 @@ public final class JavaFxScreenNavigator extends AbstractScreenNavigator<Parent>
         this.rootContainer = rootContainer;
     }
 
+    /**
+     * Присоединяет view экрана к общему {@link StackPane}. Новый узел добавляется
+     * скрытым и отключённым — до вызова {@link #display} он не должен быть виден
+     * и не должен участвовать в focus traversal / получать клавиатурные события.
+     */
     @Override
     protected void attach(Class<?> screenType, Parent view) {
         checkFxThread();
         view.setVisible(false);
+        view.setDisable(true);
         rootContainer.getChildren().add(view);
     }
 
+    /**
+     * Делает видимым и активным ровно один узел — тот, что соответствует
+     * {@code screenType}; все остальные становятся скрытыми и отключёнными.
+     * <p>
+     * {@code setDisable(true)} на скрытых узлах предотвращает две проблемы
+     * JavaFX-модели видимости (в отличие от Swing, где {@code CardLayout} решает
+     * это сам): переход фокуса Tab'ом на невидимый узел и перехват Scene-level
+     * акселераторов/mnemonics обработчиками скрытого экрана.
+     */
     @Override
     protected void display(Class<?> screenType, Parent view) {
         checkFxThread();
         for (var node : rootContainer.getChildren()) {
-            node.setVisible(node == view);
+            boolean isTarget = node == view;
+            node.setVisible(isTarget);
+            node.setDisable(!isTarget);
         }
     }
 
