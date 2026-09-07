@@ -65,4 +65,24 @@ public interface ScreenNavigator {
      *         текущим показанным (верхним) экраном навигатора
      */
     boolean isShowing(Class<?> screenType);
+
+    /**
+     * Показывает экран указанного типа, ЗАМЕНЯЯ текущий экран без добавления его
+     * в историю навигации — {@link #back()} не сможет вернуться к экрану,
+     * показанному до этого вызова. Полезно для splash → main, login → main после
+     * logout и других сценариев, где предыдущий экран не должен быть достижим назад.
+     */
+    <T extends Screen<?, ?, ?>> void replace(Class<T> screenType);
+
+    /** @see #replace(Class) — вариант с передачей {@code SceneData} */
+    <SD, T extends Screen<?, ?, SD>> void replace(Class<T> screenType, SD data);
+
+    /**
+     * Очищает историю навигации: после вызова {@link #canGoBack()} вернёт {@code false},
+     * а {@link #back()} не выполнит переход. Экраны, ранее находившиеся в истории,
+     * при этом НЕ уничтожаются (в отличие от {@link #evict}) — их инстансы остаются
+     * закэшированными в {@code ScreenFactory} и будут переиспользованы при повторном
+     * {@link #show(Class)}.
+     */
+    void clearHistory();
 }

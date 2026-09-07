@@ -84,6 +84,20 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     }
 
     @Override
+    public <T extends Screen<?, ?, ?>> void replace(Class<T> screenType) {
+        requireUiThread();
+        var screen = screenFactory.get(screenType);
+        present(screenType, screen, false);
+    }
+
+    @Override
+    public <SD, T extends Screen<?, ?, SD>> void replace(Class<T> screenType, SD data) {
+        requireUiThread();
+        var screen = screenFactory.get(screenType);
+        presentWithData(screenType, screen, data, false);
+    }
+
+    @Override
     public <T extends Screen<?, ?, ?>> void show(Class<T> screenType) {
         requireUiThread();
         var screen = screenFactory.get(screenType);
@@ -376,6 +390,12 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     public boolean isShowing(Class<?> screenType) {
         requireUiThread();
         return currentScreenType != null && currentScreenType.equals(screenType);
+    }
+
+    @Override
+    public void clearHistory() {
+        requireUiThread();
+        history.clear();
     }
 
     /**
