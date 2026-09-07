@@ -85,12 +85,14 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     @Override
     public <T extends Screen<?, ?, ?>> void show(Class<T> screenType) {
+        requireUiThread();
         var screen = screenFactory.get(screenType);
         present(screenType, screen, true);
     }
 
     @Override
     public <SD, T extends Screen<?, ?, SD>> void show(Class<T> screenType, SD data) {
+        requireUiThread();
         var screen = screenFactory.get(screenType);
         presentWithData(screenType, screen, data, true);
     }
@@ -113,12 +115,14 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
 
     @Override
     public <T extends Screen<?, ?, ?>> Runnable showModal(Class<T> screenType) {
+        requireUiThread();
         var screen = screenFactory.get(screenType);
         return presentModal(screenType, screen);
     }
 
     @Override
     public <SD, T extends Screen<?, ?, SD>> Runnable showModal(Class<T> screenType, SD data) {
+        requireUiThread();
         var screen = screenFactory.get(screenType);
         return presentModalWithData(screenType, screen, data);
     }
@@ -356,6 +360,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
      * Проверяет, есть ли в истории навигации экран, к которому можно вернуться
      * вызовом {@link #back()}, без выполнения самого перехода.
      */
+    @Override
     public boolean canGoBack() {
         requireUiThread();
         return !history.isEmpty();
@@ -367,6 +372,7 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
      * необходимости обращаться к {@link #getCurrentScreen()} и делать
      * {@code instanceof}/{@code getClass().equals(...)} в коде приложения).
      */
+    @Override
     public boolean isShowing(Class<?> screenType) {
         requireUiThread();
         return currentScreenType != null && currentScreenType.equals(screenType);

@@ -53,4 +53,16 @@ public interface ScreenNavigator {
     void addListener(ScreenNavigatorListener listener);
 
     void removeListener(ScreenNavigatorListener listener);
+
+    /**
+     * @return {@code true}, если в истории навигации есть экран,
+     *         к которому можно вернуться через {@link #back()}
+     */
+    boolean canGoBack();
+
+    /**
+     * @return {@code true}, если экран указанного типа сейчас является
+     *         текущим показанным (верхним) экраном навигатора
+     */
+    boolean isShowing(Class<?> screenType);
 }
