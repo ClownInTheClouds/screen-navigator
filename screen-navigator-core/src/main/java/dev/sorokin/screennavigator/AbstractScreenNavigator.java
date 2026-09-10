@@ -24,6 +24,13 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     private final Deque<Class<? extends Screen<?, ?, ?>>> history = new ArrayDeque<>();
     private final List<ScreenNavigatorListener> listeners = new CopyOnWriteArrayList<>();
     private final Set<Class<? extends Screen<?, ?, ?>>> modalOnly = ConcurrentHashMap.newKeySet();
+    /**
+     * Типы экранов, чьё модальное окно сейчас открыто (между {@code onModalOpened} и
+     * {@code onModalClosed}). Используется как guard от повторного {@code showModal} для
+     * того же типа, пока первое окно ещё не закрыто (см. {@link #presentModalInternal}),
+     * и как источник данных для {@link #isModalOpen(Class)}/{@link #getOpenModalScreens()}.
+     */
+    private final Set<Class<? extends Screen<?, ?, ?>>> openModals = ConcurrentHashMap.newKeySet();
     private final ScreenFactory screenFactory;
     private final int maxHistoryDepth;
 
@@ -111,19 +118,38 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         presentWithData(screenType, screen, data, true);
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Создание экрана разделено на две фазы (см. {@link ScreenFactory#registerAsync}):
+     * фоновая подготовка данных выполняется на {@code backgroundExecutor}, а собственно
+     * конструирование {@link Screen} (и, как следствие, его toolkit-специфичного view)
+     * всегда происходит на UI-потоке внутри {@link #runOnUiThread}. Это гарантирует, что
+     * toolkit-компоненты никогда не создаются вне EDT/FX Application Thread, даже если
+     * экран зарегистрирован через обычный {@link ScreenFactory#register} (в этом случае
+     * фоновая фаза — тривиальный no-op, а вся сборка просто переносится на UI-поток
+     * целиком, что уже безопасно).
+     */
     @Override
     public <T extends Screen<?, ?, ?>> void showAsync(Class<T> screenType, Executor backgroundExecutor) {
         backgroundExecutor.execute(() -> {
-            var screen = screenFactory.get(screenType); // тяжёлое создание — не на UI-потоке
-            runOnUiThread(() -> present(screenType, screen, true));
+            var prepared = screenFactory.prepareAsync(screenType); // только данные, без UI
+            runOnUiThread(() -> {
+                var screen = screenFactory.buildOnUiThread(screenType, prepared); // view строится здесь
+                present(screenType, screen, true);
+            });
         });
     }
 
+    /** @see #showAsync(Class, Executor) */
     @Override
     public <SD, T extends Screen<?, ?, SD>> void showAsync(Class<T> screenType, SD data, Executor backgroundExecutor) {
         backgroundExecutor.execute(() -> {
-            var screen = screenFactory.get(screenType);
-            runOnUiThread(() -> presentWithData(screenType, screen, data, true));
+            var prepared = screenFactory.prepareAsync(screenType);
+            runOnUiThread(() -> {
+                var screen = screenFactory.buildOnUiThread(screenType, prepared);
+                presentWithData(screenType, screen, data, true);
+            });
         });
     }
 
@@ -150,8 +176,19 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
         return true;
     }
 
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Как и {@link #canGoBack()}/{@link #isShowing(Class)}, требует вызова с UI-потока:
+     * {@code currentScreen} — обычное (не {@code volatile}) поле, мутируемое только на
+     * UI-потоке, и вся модель конкурентности библиотеки построена на confinement к этому
+     * потоку, а не на блокировках.
+     *
+     * @throws IllegalStateException если вызвано не из UI-потока
+     */
     @Override
     public Screen<?, ?, ?> getCurrentScreen() {
+        requireUiThread();
         return currentScreen;
     }
 
@@ -183,8 +220,13 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
             currentScreen = null;
             currentScreenType = null;
         }
-        history.remove(screenType);
+        // removeIf, а не remove(Object): один и тот же screenType может встретиться в
+        // back-стеке несколько раз (show(A) -> show(B) -> show(A) -> show(C) даёт [A, B, A]),
+        // а Deque.remove(Object) убирает только первое вхождение — эвикнутый тип мог бы
+        // "воскреснуть" через back().
+        history.removeIf(type -> type.equals(screenType));
         modalOnly.remove(screenType);
+        openModals.remove(screenType);
         screenFactory.evict(screenType);
         fire(listener -> listener.onScreenDestroyed(screenType));
     }
@@ -302,6 +344,16 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
                     screenType.getName() + " is already attached via show(...); "
                             + "a Screen instance must not be shown via both show(...) and showModal(...)");
         }
+        // Guard от повторного showModal для того же типа, пока первое модальное окно ещё
+        // открыто: Swing/JavaFX прокачивают вложенный event loop внутри модального показа,
+        // поэтому пользовательский код технически может вызвать showModal(sameType) второй
+        // раз до закрытия первого окна — без этой проверки второй showModal попытался бы
+        // поместить тот же view в новый контейнер, "телепортировав" его из первого окна.
+        if (!openModals.add(screenType)) {
+            throw new IllegalStateException(
+                    screenType.getName() + " is already open as a modal screen; "
+                            + "close it before calling showModal(...) again for the same type");
+        }
         modalOnly.add(screenType);
 
         var handle = createModal(screenType, viewOf(screen));
@@ -310,20 +362,26 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
             if (closed.compareAndSet(false, true)) handle.close();
         };
         if (screen instanceof ModalScreen modalScreen) modalScreen.bindCloseAction(closeAction);
-        fire(listener -> listener.onModalOpened(screenType));
 
+        // onModalOpened фиксируется только после успешного onShow() — тогда onModalClosed
+        // в finally гарантированно парный при любом исходе (исключение в deliverSceneData/
+        // onShow/handle.show()), без "утечки" состояния у слушателей, полагающихся на
+        // парность этих двух событий.
+        boolean shown = false;
         try {
             deliverSceneData.run();
             screen.onShow();
-        } catch (RuntimeException e) {
+            shown = true;
+            fire(listener -> listener.onModalOpened(screenType));
+            handle.show(); // блокирует до close() — обычное поведение модального окна
+        } finally {
+            openModals.remove(screenType);
             closeAction.run();
-            throw e;
+            if (shown) {
+                screen.onHide();
+                fire(listener -> listener.onModalClosed(screenType));
+            }
         }
-
-        handle.show();
-        closeAction.run();
-        screen.onHide();
-        fire(listener -> listener.onModalClosed(screenType));
         return closeAction;
     }
 
@@ -396,6 +454,24 @@ public abstract class AbstractScreenNavigator<V> implements ScreenNavigator {
     public void clearHistory() {
         requireUiThread();
         history.clear();
+    }
+
+    /**
+     * {@inheritDoc}
+     * <p>
+     * Не учитывает обычные (не модальные) экраны — см. {@link #getCurrentScreen()} для них.
+     * Модальный флоу — намеренно отдельная от основной навигации плоскость.
+     */
+    @Override
+    public boolean isModalOpen(Class<?> screenType) {
+        requireUiThread();
+        return openModals.contains(screenType);
+    }
+
+    @Override
+    public Set<Class<? extends Screen<?, ?, ?>>> getOpenModalScreens() {
+        requireUiThread();
+        return Set.copyOf(openModals);
     }
 
     /**

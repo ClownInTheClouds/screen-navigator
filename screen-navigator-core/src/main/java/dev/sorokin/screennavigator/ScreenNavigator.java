@@ -1,5 +1,6 @@
 package dev.sorokin.screennavigator;
 
+import java.util.Set;
 import java.util.concurrent.Executor;
 
 public interface ScreenNavigator {
@@ -45,7 +46,22 @@ public interface ScreenNavigator {
     /** @return {@code true}, если в истории был предыдущий экран и переход выполнен */
     boolean back();
 
+    /**
+     * @return текущий показанный обычный (не модальный) экран. Открытые модальные окна
+     *         не влияют на возвращаемое значение — модальный флоу является отдельной от
+     *         основной навигации плоскостью; см. {@link #isModalOpen(Class)} для запроса
+     *         состояния модальных окон.
+     */
     Screen<?, ?, ?> getCurrentScreen();
+
+    /**
+     * @return {@code true}, если экран указанного типа сейчас открыт как модальное окно
+     *         (между {@code onModalOpened} и {@code onModalClosed})
+     */
+    boolean isModalOpen(Class<?> screenType);
+
+    /** @return read-only снимок типов экранов, чьи модальные окна сейчас открыты */
+    Set<Class<? extends Screen<?, ?, ?>>> getOpenModalScreens();
 
     /** Убирает экран из кэша навигатора; при повторном {@link #show} будет создан заново. */
     void evict(Class<? extends Screen<?, ?, ?>> screenType);
