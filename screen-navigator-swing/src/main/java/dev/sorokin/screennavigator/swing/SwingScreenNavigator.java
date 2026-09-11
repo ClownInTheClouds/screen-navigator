@@ -28,6 +28,13 @@ public final class SwingScreenNavigator extends AbstractScreenNavigator<JCompone
         ((CardLayout) rootContainer.getLayout()).show(rootContainer, screenType.getName());
     }
 
+    /**
+     * Создаёт модальный {@link JDialog} с {@code view} в качестве content pane.
+     * <p>
+     * Возвращённый {@link ModalHandle#show()} вызывает {@code dialog.setVisible(true)},
+     * что блокирует EDT до {@link ModalHandle#close()} — обычное поведение модального
+     * {@code JDialog} в Swing.
+     */
     @Override
     protected ModalHandle createModal(Class<?> screenType, JComponent view) {
         checkEdt();
@@ -39,7 +46,7 @@ public final class SwingScreenNavigator extends AbstractScreenNavigator<JCompone
         return new ModalHandle() {
             @Override
             public void show() {
-                dialog.setVisible(true); // блокирует EDT до close() — обычное поведение модального JDialog
+                dialog.setVisible(true);
             }
 
             @Override

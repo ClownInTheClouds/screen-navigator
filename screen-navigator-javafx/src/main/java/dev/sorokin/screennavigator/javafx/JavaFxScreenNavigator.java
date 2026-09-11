@@ -50,6 +50,12 @@ public final class JavaFxScreenNavigator extends AbstractScreenNavigator<Parent>
         }
     }
 
+    /**
+     * Создаёт модальный {@link Stage} со {@code view} в качестве корня сцены.
+     * <p>
+     * Возвращённый {@link ModalHandle#show()} вызывает {@code stage.showAndWait()}, что
+     * блокирует FX Application Thread до {@link ModalHandle#close()}.
+     */
     @Override
     protected ModalHandle createModal(Class<?> screenType, Parent view) {
         checkFxThread();
@@ -60,7 +66,7 @@ public final class JavaFxScreenNavigator extends AbstractScreenNavigator<Parent>
         return new ModalHandle() {
             @Override
             public void show() {
-                stage.showAndWait(); // блокирует FX Application Thread до close()
+                stage.showAndWait();
             }
 
             @Override
@@ -94,7 +100,7 @@ public final class JavaFxScreenNavigator extends AbstractScreenNavigator<Parent>
         return rootContainer;
     }
 
-    private void checkFxThread() { // <-- убрали static: теперь вызывает instance-метод isUiThread()
+    private void checkFxThread() {
         if (!isUiThread()) {
             throw new IllegalStateException(
                     "JavaFxScreenNavigator must be used from the FX Application Thread; "
